@@ -13,6 +13,8 @@ namespace MQTTSmartClassroom
             public string Computer {  get; set; }
             public string Name { get; set; }
             public List<SensorInfo> Sensors { get; set; } = new List<SensorInfo>();
+
+            public DateTime Timestamp { get; set; }
         }
 
         public class SensorInfo
@@ -20,6 +22,8 @@ namespace MQTTSmartClassroom
             public string Type { get; set; }
             public string Name { get; set; }
             public double? Value { get; set; }
+            public DateTime Timestamp { get; set; }
+
         }
     }
 }

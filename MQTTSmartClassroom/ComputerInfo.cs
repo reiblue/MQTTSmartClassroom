@@ -10,5 +10,7 @@ namespace MQTTSmartClassroom
     {
         public string ComputerName { get; set; }
         public List<ProcessInfo> ProcessList { get; set; }
+
+        public DateTime Timestamp { get; set; }
     }
 }

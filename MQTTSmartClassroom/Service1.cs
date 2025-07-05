@@ -14,6 +14,7 @@ using static MQTTSmartClassroom.JsonStruture;
 using System.Text.Json;
 using LibreHardwareMonitor.Hardware;
 using System.IO;
+using static CpuTemperatureMonitor;
 
 namespace MQTTSmartClassroom
 {
@@ -57,7 +58,11 @@ namespace MQTTSmartClassroom
                         true,
                 path + nameCertificate);
 
-                await broker.ConnectAsync();
+                
+
+                
+
+                
 
                 timeSeconds = 1000 * 60 * timeMinutes; // Convertendo minutos para segundos
 
@@ -67,7 +72,7 @@ namespace MQTTSmartClassroom
             {
 
                 System.IO.File.AppendAllText("LogServico.txt",
-                        $"Erro: {ex.Message}\n");
+                        DateTime.Now + $" Erro: {ex.Message}\n");
 
             }            
             
@@ -79,6 +84,10 @@ namespace MQTTSmartClassroom
             {
                 try
                 {
+
+                    await broker.ConnectAsync();
+
+                    DateTime currentTime = DateTime.Now;
 
                     Computer computer = new Computer
                     {
@@ -96,13 +105,15 @@ namespace MQTTSmartClassroom
                         Console.WriteLine($"Hardware: {hardware.Name}");
                         hardware.Update(); // Atualiza os sensores
 
-                        foreach (var sensor in hardware.Sensors)
+                        /*foreach (var sensor in hardware.Sensors)
                         {
                             Console.WriteLine($"  {sensor.SensorType}: {sensor.Name} = {sensor.Value} ");
-                        }
+                        }*/
                     }
 
                     var hardwareList = new List<HardwareInfo>();
+
+                    
 
                     foreach (var hardware in computer.Hardware)
                     {
@@ -110,7 +121,8 @@ namespace MQTTSmartClassroom
                         var hardwareInfo = new HardwareInfo
                         {
                             Name = hardware.Name,
-                            Computer = System.Net.Dns.GetHostName()
+                            Computer = System.Net.Dns.GetHostName(),
+                            Timestamp = currentTime // Adiciona o timestamp atual
                         };
 
 
@@ -120,12 +132,16 @@ namespace MQTTSmartClassroom
                             {
                                 Type = sensor.SensorType.ToString(),
                                 Name = sensor.Name,
-                                Value = sensor.Value
+                                Value = sensor.Value,
+                                Timestamp = currentTime // Adiciona o timestamp atual
                             });
+
+                            
                         }
 
                         hardwareList.Add(hardwareInfo);
                     }
+                    
 
                     // Converter para JSON
                     string json = JsonSerializer.Serialize(hardwareList, new JsonSerializerOptions { WriteIndented = true });
@@ -137,7 +153,7 @@ namespace MQTTSmartClassroom
                     int cpuCores = Environment.ProcessorCount;
 
                     var cpuTimes = new Dictionary<int, TimeSpan>();
-                    var timeStamp = DateTime.UtcNow;
+                    var timeStamp = currentTime;
 
                     foreach (var proc in processos)
                     {
@@ -174,7 +190,9 @@ namespace MQTTSmartClassroom
                             {
                                 PID = proc.Id,
                                 CpuPercentage = Math.Round(cpuPercent, 2),
-                                Name = proc.ProcessName
+                                Name = proc.ProcessName,
+                                Timestamp = currentTime
+
                             });
                         }
                         catch { }
@@ -186,22 +204,33 @@ namespace MQTTSmartClassroom
                     var computerInfo = new ComputerInfo
                     {
                         ComputerName = Environment.MachineName,
-                        ProcessList = listaOrdenada
+                        ProcessList = listaOrdenada,
+                        Timestamp = currentTime
+                        
                     };
 
                     // Converte para JSON
                     json = JsonSerializer.Serialize(computerInfo, new JsonSerializerOptions { WriteIndented = true });
                     await broker.PublishAsync(smartClassroomName  + @"\PROCESS_COMPUTERS", json);
 
+
+                    /*//Temperatura
+                    CpuTemperatureMonitor monitor = new CpuTemperatureMonitor();
+                    TemperatureReading cpuReading = monitor.GetOverallCpuTemperatureOpenHardware();
+
+                    json = JsonSerializer.Serialize(cpuReading, new JsonSerializerOptions { WriteIndented = true });
+                    await broker.PublishAsync(smartClassroomName + @"\CPU_TEMPERATURE", json);*/
+
                 }
                 catch (Exception ex)
                 {
                     System.IO.File.AppendAllText(path + "LogServico.txt",
-                        $"Erro: {ex.Message}\n");
+                        DateTime.Now +  $" Erro: {ex.Message}\n");
                 }
                 finally
                 {
                     Thread.Sleep(timeSeconds);
+                    await broker.DisconnectAsync();
                 }
             }
         }
@@ -213,5 +242,7 @@ namespace MQTTSmartClassroom
             if (workerThread != null && workerThread.IsAlive)
                 workerThread.Join();
         }
+
+        
     }
 }

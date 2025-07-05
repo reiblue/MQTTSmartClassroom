@@ -8,8 +8,11 @@ namespace MQTTSmartClassroom
 {
     public class ProcessInfo
     {
+        public DateTime Timestamp { get; set; }
         public int PID { get; set; }
         public double CpuPercentage { get; set; }
         public string Name { get; set; }
+        
+
     }
 }
