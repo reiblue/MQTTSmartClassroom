@@ -14,6 +14,7 @@ using static MQTTSmartClassroom.JsonStruture;
 using System.Text.Json;
 using LibreHardwareMonitor.Hardware;
 using System.IO;
+using static CpuTemperatureMonitor;
 
 namespace MQTTSmartClassroom
 {
@@ -192,6 +193,14 @@ namespace MQTTSmartClassroom
                     // Converte para JSON
                     json = JsonSerializer.Serialize(computerInfo, new JsonSerializerOptions { WriteIndented = true });
                     await broker.PublishAsync(smartClassroomName  + @"\PROCESS_COMPUTERS", json);
+
+
+                    //Temperatura
+                    CpuTemperatureMonitor monitor = new CpuTemperatureMonitor();
+                    TemperatureReading cpuReading = monitor.GetOverallCpuTemperatureOpenHardware();
+
+                    json = JsonSerializer.Serialize(cpuReading, new JsonSerializerOptions { WriteIndented = true });
+                    await broker.PublishAsync(smartClassroomName + @"\CPU_TEMPERATURE", json);
 
                 }
                 catch (Exception ex)
