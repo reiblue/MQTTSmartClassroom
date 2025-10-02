@@ -93,7 +93,9 @@
   <ItemGroup>
     <Compile Include="ComputerInfo.cs" />
     <Compile Include="CpuTemperatureMonitor.cs" />
+    <Compile Include="IdleTime.cs" />
     <Compile Include="JsonStruture.cs" />
+    <Compile Include="LoopbackServer.cs" />
     <Compile Include="MqttPublisher.cs" />
     <Compile Include="ProcessInfo.cs" />
     <Compile Include="Service1.cs">
@@ -115,6 +117,9 @@
     </EmbeddedResource>
   </ItemGroup>
   <ItemGroup>
+    <Content Include="IdleMaxMinutes.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="IPBroker.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
