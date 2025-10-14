@@ -14,6 +14,8 @@ using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
+using System.Management;
+using System.Text.Json.Nodes;
 
 namespace MQTTSmartClassroom
 {
@@ -39,12 +41,32 @@ namespace MQTTSmartClassroom
 
         // Cooldown entre tentativas de abrir o cliente
         static readonly TimeSpan LaunchCooldown = TimeSpan.FromSeconds(15);
+        private static int maxLines = 99;
+
+        private MQTTClient.MqttSubscriber subscriber;
+
+        private List<string> processOff = new List<string>();
+        private static List<string> actionTCPLoopback = new List<string>();
 
         public smartclassroom()
         {
             InitializeComponent();
+
+            //try
+            //{
+            //    //Limpar o arquivo de texto 
+            //    System.IO.File.WriteAllText(logPathLog, string.Empty);
+            //}
+            //catch (Exception ex)
+            //{
+            //    PrependLogLine("ConstructoMethod->CleanText->Erro", ex.Message);
+            //}
+
             try
             {
+                
+
+
                 logPathLog = Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "LogServico.txt");
                 IPBroker = File.ReadAllText(path + "IPBroker.txt").Trim();
                 System.IO.File.AppendAllText(logPathLog,
@@ -63,6 +85,8 @@ namespace MQTTSmartClassroom
                 System.IO.File.AppendAllText(logPathLog,
                         DateTime.Now + $" LOAD: idleMaxMinutes\n");
 
+
+
             }
             catch (Exception ex)
             {
@@ -78,6 +102,40 @@ namespace MQTTSmartClassroom
         {
             try
             {
+                //Limpar o arquivo de texto 
+                System.IO.File.WriteAllText(logPathLog, string.Empty);
+            }
+            catch (Exception ex)
+            {
+                PrependLogLine("ConstructoMethod->CleanText->Erro", ex.Message);
+            }
+
+            try
+            {
+                PrependLogLine("OnStart->Subscriber->Action", "Subscriber acionado");
+
+                subscriber = new MQTTClient.MqttSubscriber(
+                    IPBroker,
+                    port,
+                    null,
+                    null,
+                    path + nameCertificate,
+                    true);
+
+                await subscriber.ConnectAsync();
+                await subscriber.SubscribeAsync(smartClassroomName + @"/" + Environment.MachineName);
+
+                PrependLogLine("OnStart->Subscriber", "Incrito topico: " + smartClassroomName + @"/" + Environment.MachineName);
+
+            }
+            catch (Exception ex)
+            {
+                PrependLogLine("OnStart->Subscriber->Erro", ex.Message);
+            }
+
+            try
+            {
+                PrependLogLine("OnStart->Subscriber->Action", "Iniciando MQTT Publisher");
                 isRunning = true;
                 workerThread = new Thread(Executar);
                 workerThread.Start();
@@ -95,6 +153,7 @@ namespace MQTTSmartClassroom
                 timeSeconds = 1000 * 60 * timeMinutes; // Convertendo minutos para segundos
 
                 await ConnectionTCP();
+                PrependLogLine("OnStart->Subscriber->Action", "MQTT Publisher Ok!");
 
             }
             catch (Exception ex)
@@ -103,7 +162,9 @@ namespace MQTTSmartClassroom
                 System.IO.File.AppendAllText(logPathLog,
                         DateTime.Now + $" OnStart->Erro: {ex.Message}\n");
 
-            }            
+            }
+
+           
             
         }
 
@@ -249,13 +310,109 @@ namespace MQTTSmartClassroom
                     json = JsonSerializer.Serialize(cpuReading, new JsonSerializerOptions { WriteIndented = true });
                     await broker.PublishAsync(smartClassroomName + @"\CPU_TEMPERATURE", json);*/
 
+                    //Verifica se existe lista de payload
                     
+
+                    try
+                    {
+                        if (subscriber.payloads != null)
+                            if (subscriber.payloads.Count > 0)
+                            {
+                                foreach (var payload in subscriber.payloads)
+                                {
+                                    try
+                                    {
+
+                                        var command = JsonSerializer.Deserialize<ProcessSetInfo>(payload);
+                                        if (command != null)
+                                        {
+
+                                            if (command.action == "include")
+                                            {
+                                                if(!processOff.Contains(command.name))
+                                                {
+                                                    processOff.Add(command.name);
+                                                    PrependLogLine("ProcessAdded", $"Processo {command.name} adicionado à lista de encerramento.");
+                                                }
+                                                else
+                                                {
+                                                    PrependLogLine("ProcessAddError", $"Processo {command.name} já existe na lista de encerramento.");
+                                                }
+                                            }
+                                            else if (command.action == "remove")
+                                            {
+                                                processOff.RemoveAt(processOff.IndexOf(command.name));
+                                                PrependLogLine("ProcessRemoved", $"Processo {command.name} removido da lista de encerramento.");
+                                            }
+                                        }
+                                    }
+
+
+                                    catch (Exception ex)
+                                    {
+                                        PrependLogLine("Deserialize->Erro", ex.Message);
+                                    }
+                                }
+                                // Limpa a lista de payloads após o processamento
+                                subscriber.payloads.Clear();
+                            }
+
+                        if (processOff.Count > 0)
+                        {
+                            foreach (var processName in processOff)
+                            {
+
+
+                                var processosParaFechar = Process.GetProcessesByName(processName);
+                                if (processosParaFechar.Count() > 0)
+                                    foreach (var proc in processosParaFechar)
+                                    {
+                                        try
+                                        {
+                                            proc.Kill();
+                                            PrependLogLine("ProcessKilled", $"Processo {processName} (PID: {proc.Id}) finalizado.");
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            PrependLogLine("ProcessKillError", $"Erro ao finalizar processo {processName} (PID: {proc.Id}): {ex.Message}");
+                                        }
+                                    }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        PrependLogLine("Running->Process->Erro", ex.Message);
+                    }
+
+                    await subscriber.KeepConnection();
+
+                    try
+                    {
+                        if (actionTCPLoopback.Count > 0)
+                        {
+                            foreach(var action in actionTCPLoopback)
+                            {
+                                var obj = JsonNode.Parse(action).AsObject();
+                                obj["name"] = Environment.MachineName;
+                                await broker.PublishAsync(smartClassroomName + @"/IDLE", obj.ToJsonString());
+                            }
+                            actionTCPLoopback.Clear();
+                        }
+                        
+                    }
+                    catch (Exception ex)
+                    {
+                        PrependLogLine("Running->Process->Erro", ex.Message);
+                    }
+
 
                 }
                 catch (Exception ex)
                 {
-                    System.IO.File.AppendAllText(logPathLog,
-                        DateTime.Now +  $" Running->Erro: {ex.Message}\n");
+                    //System.IO.File.AppendAllText(logPathLog,
+                    //    DateTime.Now +  $" Running->Erro: {ex.Message}\n");
+                    PrependLogLine("Running->Erro", ex.Message);
                 }
                 finally
                 {
@@ -283,7 +440,7 @@ namespace MQTTSmartClassroom
             var listener = new TcpListener(BindAddress, Port);
             listener.Start();
             System.IO.File.AppendAllText(logPathLog,
-                                   DateTime.Now + $" [SERVER] Escutando em {BindAddress}:{Port} (Ctrl+C para sair)\n");
+                                   DateTime.Now + $" [SERVER] Escutando em {BindAddress}:{Port} \n");
 
             var clients = new ConcurrentDictionary<TcpClient, NetworkStream>();
 
@@ -389,8 +546,11 @@ namespace MQTTSmartClassroom
                     // protocolo: mensagens terminadas por \n
                     string line;
                     while ((line = ExtractLine(sb)) != null)
-                    {
-                        Console.WriteLine($"[RECV] {line}");
+                    {                       
+
+                        PrependLogLine("RECV", line);
+
+                        actionTCPLoopback.Add(line);
 
                         // responde (eco + ack)
                         var reply = enc.GetBytes($"ack: {line}\n");
@@ -401,16 +561,16 @@ namespace MQTTSmartClassroom
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
-            {
-                System.IO.File.AppendAllText(logPathLog,
-                                   DateTime.Now + $" [SERVER] Erro cliente: {ex.Message}\n");
+            {                
+                PrependLogLine("Exception-HandleClientAsync", ex.Message);
             }
             finally
             {
                 clients.TryRemove(client, out _);
                 try { stream.Close(); client.Close(); } catch { }
-                System.IO.File.AppendAllText(logPathLog,
-                                   DateTime.Now + $" [SERVER] Cliente desconectado.\n");
+                //System.IO.File.AppendAllText(logPathLog,
+                //                   DateTime.Now + $" [SERVER] Cliente desconectado.\n");
+                PrependLogLine("finally-HandleClientAsync", "Cliente desconectado.");
             }
         }
 
@@ -434,9 +594,21 @@ namespace MQTTSmartClassroom
         }
 
         // ===== Monitor que dispara o cliente se não houver conexões =====
+        /// <summary>
+        /// Inicio o serviço monitorando se há clientes conectados.
+        /// O serviço escuta em loopback e aceita apenas 1 cliente.
+        /// Caso ja não haja clientes conectados, tenta iniciar o cliente e
+        /// caso já esteja rodando um cliente envia comando para fechar.
+        /// </summary>
+        /// <param name="clients"></param>
+        /// <param name="ct"></param>
+        /// <returns></returns>
         static async Task StartClientMonitorAsync(ConcurrentDictionary<TcpClient, NetworkStream> clients, CancellationToken ct)
         {
             DateTime lastLaunch = DateTime.MinValue;
+
+            // espera 5 minutos antes de começar a monitorar
+            //await Task.Delay(1000 * 60 * 5, ct);
 
             while (!ct.IsCancellationRequested)
             {
@@ -448,33 +620,51 @@ namespace MQTTSmartClassroom
                     {
                         if (!IsClientProcessRunning())
                         {
-                            if (File.Exists(CLIENT_EXE_PATH))
-                            {
-                                Console.WriteLine($"[SERVER] Nenhum cliente conectado. Iniciando cliente: {CLIENT_EXE_PATH}");
-                                var psi = new ProcessStartInfo
+                            //if (UsuarioUsaLoginLocalDaMaquina())
+                                if (File.Exists(CLIENT_EXE_PATH))
                                 {
-                                    FileName = CLIENT_EXE_PATH,
-                                    UseShellExecute = false,
-                                    CreateNoWindow = false,   // deixe true se quiser oculto
-                                    WorkingDirectory = Path.GetDirectoryName(CLIENT_EXE_PATH)
-                                };
-                                try
-                                {
-                                    Process.Start(psi);
-                                    lastLaunch = DateTime.UtcNow;
+                                    PrependLogLine("SERVER", $"Nenhum cliente conectado. Iniciando cliente: {CLIENT_EXE_PATH}");
+                                    //var psi = new ProcessStartInfo
+                                    //{
+                                    //    FileName = CLIENT_EXE_PATH,
+                                    //    UseShellExecute = false,
+                                    //    CreateNoWindow = false,   // deixe true se quiser oculto
+                                    //    WorkingDirectory = Path.GetDirectoryName(CLIENT_EXE_PATH)
+                                    //};
+                                    //try
+                                    //{
+                                    //    Process.Start(psi);
+                                    //    lastLaunch = DateTime.UtcNow;
+                                    //}
+                                    //catch (Exception ex)
+                                    //{
+                                    //    System.IO.File.AppendAllText(logPathLog,
+                                    //    DateTime.Now + $" [SERVER] Falha ao iniciar cliente: {ex.Message}\n");
+                                    //}
+
+                                    try
+                                    {
+                                        var proc = UserSessionLauncher.StartInActiveUserSession(CLIENT_EXE_PATH, "--arg1");
+                                        //bool visivel = VisibilityChecks.WaitUntilVisible(proc, TimeSpan.FromSeconds(10));
+
+                                        //// Logue o resultado
+                                        //if (visivel)
+                                        //    EventLog.WriteEntry("MeuServico", "Aplicativo iniciado e visível ao usuário.", EventLogEntryType.Information);
+                                        //else
+                                        //    EventLog.WriteEntry("MeuServico", "Aplicativo iniciado, mas não foi possível confirmar visibilidade.", EventLogEntryType.Warning);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        EventLog.WriteEntry("MeuServico", $"Falha ao iniciar app para o usuário: {ex.Message}", EventLogEntryType.Error);
+                                    }
+
                                 }
-                                catch (Exception ex)
+                                else
                                 {
                                     System.IO.File.AppendAllText(logPathLog,
-                                    DateTime.Now + $" [SERVER] Falha ao iniciar cliente: {ex.Message}\n");
-                                }
-                            }
-                            else
-                            {                                
-                                System.IO.File.AppendAllText(logPathLog,
-                                    DateTime.Now + $" [SERVER] CLIENT_EXE_PATH não encontrado: {CLIENT_EXE_PATH}\n");
+                                        DateTime.Now + $" [SERVER] CLIENT_EXE_PATH não encontrado: {CLIENT_EXE_PATH}\n");
 
-                            }
+                                }
                         }
                     }
                 }
@@ -499,5 +689,84 @@ namespace MQTTSmartClassroom
             catch { return false; }
         }
 
-    }
+        public static void PrependLogLine(string option, string payload)
+        {
+            // monta a linha com timestamp, ajuste o formato se quiser
+            string newLine = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [{option}] {payload}";
+
+            /*
+            // lê até (maxLines-1) linhas existentes (para somar com a nova e dar maxLines)
+            IEnumerable<string> tail =
+                File.Exists(logPathLog)
+                    ? File.ReadLines(logPathLog).Take(maxLines - 1)
+                    : Enumerable.Empty<string>();
+
+            // novo conteúdo: nova linha + primeiras (maxLines-1) já existentes
+            var linesToWrite = new[] { newLine }.Concat(tail);
+
+            // reescreve o arquivo todo
+            File.WriteAllLines(logPathLog, linesToWrite);*/
+
+            System.IO.File.AppendAllText(logPathLog, newLine + $"\n");
+        }
+
+        private static bool UsuarioUsaLoginLocalDaMaquina()
+        {
+            try
+            {
+                var s = new ManagementObjectSearcher("SELECT UserName FROM Win32_ComputerSystem");
+                foreach (var o in s.Get())
+                {
+                    var full = o["UserName"] as string;         // ex: "MINHAMAQUINA\\rodrigo" ou "MEUDOMINIO\\rodrigo"
+                    if (string.IsNullOrEmpty(full)) return false; // ninguém logado
+
+                    var parts = full.Split('\\');
+                    var domain = parts.Length > 1 ? parts[0] : "";
+                    return string.Equals(domain, Environment.MachineName, StringComparison.OrdinalIgnoreCase);
+                }
+            }
+            catch (Exception ex)
+            {
+                PrependLogLine("UsuarioUsaLoginLocalDaMaquina", ex.Message);
+            }
+            
+            return false;
+        }
+
+
+        private static bool UsuarioUsaLoginLocalDaMaquina(bool action_2)
+        {
+            try
+            {
+                var scope = new ManagementScope(@"\\.\root\cimv2");
+                scope.Connect(); // garante conexão
+
+                var searcher = new ManagementObjectSearcher(
+                    scope,
+                    new ObjectQuery("SELECT UserName FROM Win32_ComputerSystem"));
+
+                foreach (ManagementObject o in searcher.Get())
+                {
+                    var full = o["UserName"] as string; // e.g. MAQUINA\rodrigo ou DOMINIO\rodrigo
+                    if (string.IsNullOrEmpty(full)) return false; // ninguém logado
+
+                    var parts = full.Split('\\');
+                    var domain = parts.Length > 1 ? parts[0] : "";
+                    return string.Equals(domain, Environment.MachineName, StringComparison.OrdinalIgnoreCase);
+                }
+            }
+            catch (ManagementException mex)
+            {
+                // Logue para diagnosticar (mex.ErrorCode / mex.Message)
+                PrependLogLine("WMI", $"WMI falhou: {mex.ErrorCode} - {mex.Message}");
+            }
+            catch (Exception ex)
+            {
+                PrependLogLine("ERR", ex.ToString());
+            }
+            return false;
+        }
+
+
+}
 }
