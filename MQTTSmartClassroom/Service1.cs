@@ -48,6 +48,15 @@ namespace MQTTSmartClassroom
         private List<string> processOff = new List<string>();
         private static List<string> actionTCPLoopback = new List<string>();
 
+        private string username = "service.windows.pc";
+        private string password = "pc!C3PF#c102$2026@S3rv1c3.";
+
+        /// <summary>
+        /// Tentativas de iniciar o programa para manter a máquina acordada
+        /// caso as tentativas se somem 30 desliga o computador
+        /// </summary>
+        private static byte tryToStartProgramKeepAwake = 0;
+
         public smartclassroom()
         {
             InitializeComponent();
@@ -117,8 +126,8 @@ namespace MQTTSmartClassroom
                 subscriber = new MQTTClient.MqttSubscriber(
                     IPBroker,
                     port,
-                    null,
-                    null,
+                    username: this.username,
+                    password: this.password,
                     path + nameCertificate,
                     true);
 
@@ -144,8 +153,8 @@ namespace MQTTSmartClassroom
                     new MQTTClient.MqttPublisher(
                         IPBroker,
                         port,
-                        null,
-                        null,
+                        username: this.username,
+                        password: this.password,
                         true,
                 path + nameCertificate);
                 
@@ -260,7 +269,7 @@ namespace MQTTSmartClassroom
 
                     List<ProcessInfo> listaProcessos = new List<ProcessInfo>();
 
-                    foreach (var proc in processosNovos)
+                    /*foreach (var proc in processosNovos)
                     {
                         try
                         {
@@ -285,6 +294,41 @@ namespace MQTTSmartClassroom
                             });
                         }
                         catch { }
+                    }*/
+
+                    foreach (var proc in processosNovos)
+                    {
+                        try
+                        {
+                            // pule processos que você ainda não tem "oldCpuTime"
+                            if (!cpuTimes.ContainsKey(proc.Id))
+                                continue;
+
+                            // ignore se já saiu
+                            if (ProcessInfo.SafeGet(() => proc.HasExited))
+                                continue;
+
+                            // CPU %
+                            TimeSpan oldCpuTime = cpuTimes[proc.Id];
+                            TimeSpan newCpuTime = ProcessInfo.SafeGet(() => proc.TotalProcessorTime);
+                            double cpuUsedMs = (newCpuTime - oldCpuTime).TotalMilliseconds;
+
+                            double elapsedMs = (newTimeStamp - timeStamp).TotalMilliseconds; // timeStamp: o anterior do seu loop
+                            if (elapsedMs <= 0) elapsedMs = 1; // evita divisão por zero
+
+                            double cpuPercent = (cpuUsedMs / elapsedMs) * 100.0 / cpuCores; // cpuCores = Environment.ProcessorCount
+
+                            // monta o objeto COMPLETO
+                            var info = ProcessInfo.MapProcessToInfo(proc, cpuPercent, new DateTimeOffset(newTimeStamp));
+                            listaProcessos.Add(info);
+
+                            // atualize o snapshot de CPU p/ próxima iteração
+                            cpuTimes[proc.Id] = newCpuTime;
+                        }
+                        catch
+                        {
+                            // silencie processos inacessíveis
+                        }
                     }
 
                     // Ordena por maior uso de CPU
@@ -407,6 +451,13 @@ namespace MQTTSmartClassroom
                     }
 
 
+                    if(tryToStartProgramKeepAwake > 45)
+                    {
+                        PrependLogLine("Shutdown", "Número máximo de tentativas de iniciar o programa para manter a máquina acordada atingido. Desligando o computador.");
+                        Process.Start("shutdown", "/s /t 0 /F");
+                    }
+
+
                 }
                 catch (Exception ex)
                 {
@@ -428,6 +479,24 @@ namespace MQTTSmartClassroom
             await broker.DisconnectAsync();
             if (workerThread != null && workerThread.IsAlive)
                 workerThread.Join();
+
+            OnShutdown();
+        }
+
+        protected override void OnShutdown()
+        {
+            // código executado especificamente durante o shutdown do Windows
+            base.OnShutdown();
+
+            var action = new ActionComputer
+            {
+                COMPUTER_NAME = Environment.MachineName,
+                ACTION = "shutdown"
+            };
+
+            string json = JsonSerializer.Serialize(action); 
+            broker.PublishAsync(smartClassroomName + @"/SHUTDOWN_COMPUTER", json.ToString()).Wait();
+
         }
 
         static async Task ConnectionTCP()
@@ -593,6 +662,8 @@ namespace MQTTSmartClassroom
             while (!ct.IsCancellationRequested) await Task.Delay(100, ct);
         }
 
+        
+
         // ===== Monitor que dispara o cliente se não houver conexões =====
         /// <summary>
         /// Inicio o serviço monitorando se há clientes conectados.
@@ -656,15 +727,19 @@ namespace MQTTSmartClassroom
                                     catch (Exception ex)
                                     {
                                         EventLog.WriteEntry("MeuServico", $"Falha ao iniciar app para o usuário: {ex.Message}", EventLogEntryType.Error);
-                                    }
+                                        tryToStartProgramKeepAwake += 1;
+                                        Thread.Sleep(1000 * 60);
+                                }
 
                                 }
                                 else
                                 {
                                     System.IO.File.AppendAllText(logPathLog,
                                         DateTime.Now + $" [SERVER] CLIENT_EXE_PATH não encontrado: {CLIENT_EXE_PATH}\n");
+                                    tryToStartProgramKeepAwake += 1;
+                                    Thread.Sleep(1000 * 60);
 
-                                }
+                            }
                         }
                     }
                 }

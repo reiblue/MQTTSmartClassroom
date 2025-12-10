@@ -52,10 +52,11 @@ namespace MQTTClient
                 {
                     tls.UseTls = true; // 🔐 Ativa TLS/SSL
                     tls.Certificates = new List<X509Certificate2> { caCert };
-                    //tls.AllowUntrustedCertificates = true;
+                    tls.AllowUntrustedCertificates = true;
                     tls.IgnoreCertificateChainErrors = true;
-                    //tls.IgnoreCertificateRevocationErrors = true;
-                    
+                    tls.IgnoreCertificateRevocationErrors = true;
+                    tls.CertificateValidationHandler = _ => true;
+
                     // 🔐 Em produção, configure validação real, exemplo:
                     // tls.CertificateValidationHandler = context =>
                     // {

@@ -108,6 +108,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ActionComputer.cs" />
     <Compile Include="ComputerInfo.cs" />
     <Compile Include="CpuTemperatureMonitor.cs" />
     <Compile Include="IdleTime.cs" />
