@@ -10,5 +10,6 @@ namespace MQTTSmartClassroom
     {
         public string COMPUTER_NAME { get; set; }
         public string ACTION { get; set; }
+        public DateTime TIMESTAMP { get; set; }
     }
 }

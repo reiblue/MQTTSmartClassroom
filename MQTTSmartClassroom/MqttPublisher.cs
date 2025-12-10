@@ -1,14 +1,16 @@
-﻿using System;
+﻿using MQTTnet;
+using MQTTnet.Client;
+using MQTTSmartClassroom;
+using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using MQTTnet;
-using MQTTnet.Client;
-using System;
-using System.Text;
-using System.Threading.Tasks;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Threading.Tasks;
 
 namespace MQTTClient
 {
@@ -17,18 +19,20 @@ namespace MQTTClient
         private readonly IMqttClient _mqttClient;
         private readonly MqttClientOptions _options;
 
-        public MqttPublisher(string brokerAddress, int brokerPort = 1883)
+        public MqttPublisher(string brokerAddress, string idClient, int brokerPort = 1883)
         {
             var factory = new MqttFactory();
             _mqttClient = factory.CreateMqttClient();
 
             _options = new MqttClientOptionsBuilder()
                 .WithTcpServer(brokerAddress, brokerPort)
-                .WithCleanSession()                
+                .WithCleanSession()  
+                .WithClientId(idClient)
                 .Build();
+
         }
 
-        public MqttPublisher(string brokerAddress, int brokerPort, string username, string password, bool useTls = false, string pathCertificate = null)
+        public MqttPublisher(string brokerAddress, int brokerPort, string username, string password, string idClient, bool useTls = false,  string pathCertificate = null)
         {
             var factory = new MqttFactory();
             _mqttClient = factory.CreateMqttClient();
@@ -37,6 +41,7 @@ namespace MQTTClient
 
             MqttClientOptionsBuilder builder = new MqttClientOptionsBuilder()
                 .WithTcpServer(brokerAddress, brokerPort)
+                .WithClientId(idClient)
                 .WithCleanSession();
 
             // 🔐 Usuário e senha
@@ -67,7 +72,31 @@ namespace MQTTClient
                 });
             }
 
+           
+
             _options = builder.Build();
+
+            _mqttClient.DisconnectedAsync += async e =>
+            {
+                // Log para debug (pode trocar por gravação em arquivo/banco)
+                smartclassroom.PrependLogLine($"[MQTT] Desconectado. Motivo: {e.Reason}", "Desconexao");
+
+                // Se quiser tentar reconectar automaticamente para sempre:
+                await Task.Delay(TimeSpan.FromSeconds(5)); // Espera 5s antes de tentar
+
+                try
+                {
+                    // Tenta reconectar usando as opções já configuradas (_options)
+                    // Importante: Como estamos dentro de um evento, o async/await funciona bem aqui
+                    await _mqttClient.ConnectAsync(_options, CancellationToken.None);
+                    Console.WriteLine("[MQTT] Reconectado com sucesso!");
+                    smartclassroom.PrependLogLine("[MQTT] Reconectado com sucesso!", "Reconexao");
+                }
+                catch(Exception ex)
+                {
+                    smartclassroom.PrependLogLine("[MQTT] Falha ao tentar reconectar.", ex.Message);
+                }
+            };
         }
 
 
@@ -111,5 +140,7 @@ namespace MQTTClient
             await _mqttClient.DisconnectAsync();
             Console.WriteLine("Desconectado do broker.");
         }
+
+        
     }
 }

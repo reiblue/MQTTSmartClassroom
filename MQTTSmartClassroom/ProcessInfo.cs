@@ -10,7 +10,7 @@ namespace MQTTSmartClassroom
 {
     public class ProcessInfo
     {
-        public DateTimeOffset Timestamp { get; set; }
+        public DateTime Timestamp { get; set; }
         public int PID { get; set; }
         public double CpuPercentage { get; set; }
         public string Name { get; set; }
@@ -73,7 +73,7 @@ namespace MQTTSmartClassroom
         }
 
         // Se quiser, centralize o mapeamento num método:
-        public static ProcessInfo MapProcessToInfo(Process proc, double cpuPercent, DateTimeOffset ts)
+        public static ProcessInfo MapProcessToInfo(Process proc, double cpuPercent, DateTime ts)
         {
             return new ProcessInfo
             {

@@ -1,21 +1,22 @@
-﻿using System;
+﻿using LibreHardwareMonitor.Hardware;
+using MQTTnet.Exceptions;
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
-using System.Linq;
-using System.ServiceProcess;
-using System.Threading;
-using static MQTTSmartClassroom.JsonStruture;
-using System.Text.Json;
-using LibreHardwareMonitor.Hardware;
 using System.IO;
-using System.Net;
-using System.Collections.Concurrent;
-using System.Net.Sockets;
-using System.Text;
-using System.Threading.Tasks;
+using System.Linq;
 using System.Management;
+using System.Net;
+using System.Net.Sockets;
+using System.ServiceProcess;
+using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
+using static MQTTSmartClassroom.JsonStruture;
 
 namespace MQTTSmartClassroom
 {
@@ -23,7 +24,7 @@ namespace MQTTSmartClassroom
     {
         private Thread workerThread;
         private bool isRunning;
-        int timeSeconds = 10 * 1000;
+        int sleepTimeRunning = 60 * 1000 * 2;
         private string path = @"C:\Program Files\SmartClassroom\";
         string IPBroker;
         int port = 8883;
@@ -44,6 +45,7 @@ namespace MQTTSmartClassroom
         private static int maxLines = 99;
 
         private MQTTClient.MqttSubscriber subscriber;
+        
 
         private List<string> processOff = new List<string>();
         private static List<string> actionTCPLoopback = new List<string>();
@@ -56,6 +58,7 @@ namespace MQTTSmartClassroom
         /// caso as tentativas se somem 30 desliga o computador
         /// </summary>
         private static byte tryToStartProgramKeepAwake = 0;
+        private bool isConnectMqtt = false;
 
         public smartclassroom()
         {
@@ -118,6 +121,8 @@ namespace MQTTSmartClassroom
             {
                 PrependLogLine("ConstructoMethod->CleanText->Erro", ex.Message);
             }
+                       
+            
 
             try
             {
@@ -129,12 +134,14 @@ namespace MQTTSmartClassroom
                     username: this.username,
                     password: this.password,
                     path + nameCertificate,
-                    true);
+                    Environment.MachineName + "_" + "subscriber",
+                    true
+                    );
 
                 await subscriber.ConnectAsync();
                 await subscriber.SubscribeAsync(smartClassroomName + @"/" + Environment.MachineName);
 
-                PrependLogLine("OnStart->Subscriber", "Incrito topico: " + smartClassroomName + @"/" + Environment.MachineName);
+                //PrependLogLine("OnStart->Subscriber", "Incrito topico: " + smartClassroomName + @"/" + Environment.MachineName);
 
             }
             catch (Exception ex)
@@ -155,11 +162,14 @@ namespace MQTTSmartClassroom
                         port,
                         username: this.username,
                         password: this.password,
+                        Environment.MachineName + "_" + "publisher",
                         true,
                 path + nameCertificate);
-                
 
-                timeSeconds = 1000 * 60 * timeMinutes; // Convertendo minutos para segundos
+                broker.ConnectAsync().Wait();
+
+
+                sleepTimeRunning = 1000 * 60 * timeMinutes; // Convertendo minutos para segundos
 
                 await ConnectionTCP();
                 PrependLogLine("OnStart->Subscriber->Action", "MQTT Publisher Ok!");
@@ -183,10 +193,27 @@ namespace MQTTSmartClassroom
             {
                 try
                 {
-
-                    await broker.ConnectAsync();
+                   
 
                     DateTime currentTime = DateTime.Now;
+
+                    try
+                    {
+                        var action = new ActionComputer
+                        {
+                            COMPUTER_NAME = Environment.MachineName,
+                            ACTION = "KEETALIVE",
+                            TIMESTAMP = DateTime.Now
+                        };
+
+                        string payload = JsonSerializer.Serialize(action);
+                        //SHUTDOWN_COMPUTER
+                        await broker.PublishAsync(smartClassroomName + @"/SHUTDOWN_COMPUTER", payload.ToString());
+                    }
+                    catch (Exception ex)
+                    {
+                        PrependLogLine("Executar->Erro", ex.Message);
+                    }
 
                     Computer computer = new Computer
                     {
@@ -319,7 +346,7 @@ namespace MQTTSmartClassroom
                             double cpuPercent = (cpuUsedMs / elapsedMs) * 100.0 / cpuCores; // cpuCores = Environment.ProcessorCount
 
                             // monta o objeto COMPLETO
-                            var info = ProcessInfo.MapProcessToInfo(proc, cpuPercent, new DateTimeOffset(newTimeStamp));
+                            var info = ProcessInfo.MapProcessToInfo(proc, cpuPercent, currentTime);
                             listaProcessos.Add(info);
 
                             // atualize o snapshot de CPU p/ próxima iteração
@@ -459,45 +486,70 @@ namespace MQTTSmartClassroom
 
 
                 }
+                catch (MqttCommunicationException ex)
+                {
+                    PrependLogLine("Running->MqttCommunicationException->Erro", "Falha na comunicação MQTT: " + ex.Message);
+                    //await broker.DisconnectAsync();   
+                    //await subscriber.DisconnectAsync();
+                    //isConnectMqtt = false;
+                }
                 catch (Exception ex)
                 {
                     //System.IO.File.AppendAllText(logPathLog,
                     //    DateTime.Now +  $" Running->Erro: {ex.Message}\n");
                     PrependLogLine("Running->Erro", ex.Message);
                 }
+                
                 finally
                 {
-                    Thread.Sleep(timeSeconds);
-                    await broker.DisconnectAsync();
-                }                
+                    Thread.Sleep(sleepTimeRunning);
+                    //await broker.DisconnectAsync();
+                }
+
+                
             }
         }
 
         protected async override void OnStop()
         {
+
+            try
+            {
+                broker.ConnectAsync();
+                var action = new ActionComputer
+                {
+                    COMPUTER_NAME = Environment.MachineName,
+                    ACTION = "SHUTDOWN",
+                    TIMESTAMP = DateTime.Now
+                };
+
+
+                string json = JsonSerializer.Serialize(action);
+                broker.PublishAsync(smartClassroomName + @"/SHUTDOWN_COMPUTER", json.ToString());
+            }
+            catch (Exception ex)
+            {
+                PrependLogLine("OnShutdown->Erro", ex.Message);
+            }
+            
+
             isRunning = false;
             await broker.DisconnectAsync();
             if (workerThread != null && workerThread.IsAlive)
-                workerThread.Join();
-
-            OnShutdown();
+                workerThread.Join();  
+            
         }
 
-        protected override void OnShutdown()
+        protected async override void OnShutdown()
         {
             // código executado especificamente durante o shutdown do Windows
             base.OnShutdown();
 
-            var action = new ActionComputer
-            {
-                COMPUTER_NAME = Environment.MachineName,
-                ACTION = "shutdown"
-            };
-
-            string json = JsonSerializer.Serialize(action); 
-            broker.PublishAsync(smartClassroomName + @"/SHUTDOWN_COMPUTER", json.ToString()).Wait();
+            
 
         }
+
+        
 
         static async Task ConnectionTCP()
         {

@@ -1,17 +1,20 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using MQTTnet;
+﻿using MQTTnet;
 using MQTTnet.Client;
+using MQTTnet.Exceptions;
+using MQTTSmartClassroom;
 using System;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.IO;
+using System.Linq;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Security.Cryptography.X509Certificates;
-using System.Net.Security;
-using System.ComponentModel;
+using System.Threading.Tasks;
 
 namespace MQTTClient
 {
@@ -20,9 +23,11 @@ namespace MQTTClient
         private readonly IMqttClient _mqttClient;
         private readonly MqttClientOptions _mqttOptions;
         public List<string> payloads;
+        public bool isConnected = false;
 
-        public MqttSubscriber(string brokerIp, int brokerPort, string username, string password, string pathCertificate,  bool useTls = false)
+        public MqttSubscriber(string brokerIp, int brokerPort, string username, string password, string pathCertificate,string idClient,  bool useTls = false)
         {
+            
             var factory = new MqttFactory();
             _mqttClient = factory.CreateMqttClient();
 
@@ -32,8 +37,10 @@ namespace MQTTClient
 
             var builder = new MqttClientOptionsBuilder()
                 .WithTcpServer(brokerIp, brokerPort)
+                .WithClientId(idClient)
                 .WithCleanSession();
 
+            
             
 
             if (!string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(password))
@@ -93,37 +100,92 @@ namespace MQTTClient
         // Inscrever-se em um tópico
         public async Task SubscribeAsync(string topic)
         {
-            if (!_mqttClient.IsConnected)
+
+            try
             {
-                Console.WriteLine("⚠️ Não conectado. Tentando conectar...");
-                await ConnectAsync();
+
+                if (!_mqttClient.IsConnected)
+                {
+                    Console.WriteLine("⚠️ Não conectado. Tentando conectar...");
+                    await ConnectAsync();
+                }
+
+                await _mqttClient.SubscribeAsync(topic);
+                smartclassroom.PrependLogLine("MQTT", "Inscrito no tópico: " + topic);
+            }
+            catch (TimeoutException ex)
+            {
+                smartclassroom.PrependLogLine("ERRO MQTT", "Tempo esgotado ao receber mensagem: " + ex.Message);
+            }
+            catch (MqttCommunicationException ex)
+            {
+                smartclassroom.PrependLogLine("ERRO MQTT", "Erro de comunicação MQTT: " + ex.Message);
+            }
+            catch (Exception ex)
+            {
+                smartclassroom.PrependLogLine("ERRO MQTT", "Erro ao processar mensagem MQTT: " + ex.Message);
             }
 
-            await _mqttClient.SubscribeAsync(topic);
-            Console.WriteLine($"📡 Inscrito no tópico: {topic}");
         }
 
         public async Task KeepConnection()
         {
-            if (!_mqttClient.IsConnected)
+            try
             {
-                await ConnectAsync();
+                if (!_mqttClient.IsConnected)
+                {
+                    await ConnectAsync();
+                }
+
+            }
+            catch (TimeoutException ex)
+            {
+                smartclassroom.PrependLogLine("ERRO MQTT", "Tempo esgotado ao receber mensagem: " + ex.Message);
+            }
+            catch (MqttCommunicationException ex)
+            {
+                smartclassroom.PrependLogLine("ERRO MQTT", "Erro de comunicação MQTT: " + ex.Message);
+            }
+            catch (Exception ex)
+            {
+                smartclassroom.PrependLogLine("ERRO MQTT", "Erro ao processar mensagem MQTT: " + ex.Message);
             }
         }
 
         // Manipular mensagens recebidas
         private Task HandleReceivedMessage(MqttApplicationMessageReceivedEventArgs e)
-        {
-            string payload = Encoding.UTF8.GetString(e.ApplicationMessage.Payload);
-            Console.WriteLine("📨 Mensagem recebida:");
-            Console.WriteLine($"→ Tópico: {e.ApplicationMessage.Topic}");
-            Console.WriteLine($"→ Payload: {payload}");
-            Console.WriteLine("-----------------------------");
-            UpdatePayload(payload);
+        { 
+
+            try
+            {
+                string payload = Encoding.UTF8.GetString(e.ApplicationMessage.Payload);
+                //Console.WriteLine("📨 Mensagem recebida:");
+                //Console.WriteLine($"→ Tópico: {e.ApplicationMessage.Topic}");
+                //Console.WriteLine($"→ Payload: {payload}");
+                //Console.WriteLine("-----------------------------");
+                UpdatePayload(payload);
+            }
+            catch (TimeoutException ex)
+            {
+                smartclassroom.PrependLogLine("ERRO MQTT", "Tempo esgotado ao receber mensagem: " + ex.Message);
+            }
+            catch (MqttCommunicationException ex)
+            {
+                smartclassroom.PrependLogLine("ERRO MQTT", "Erro de comunicação MQTT: " + ex.Message);
+            }
+            catch (Exception ex)
+            {
+                smartclassroom.PrependLogLine("ERRO MQTT", "Erro ao processar mensagem MQTT: " + ex.Message);
+            }
+            
             return Task.CompletedTask;
+            
+
         }
 
-       public void UpdatePayload(string payload)
+      
+
+        public void UpdatePayload(string payload)
         {
             this.payloads.Add(payload);
         }
