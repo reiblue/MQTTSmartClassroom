@@ -135,6 +135,7 @@ namespace MQTTClient
                 if (!_mqttClient.IsConnected)
                 {
                     await ConnectAsync();
+                    this.isConnected = true;
                 }
 
             }

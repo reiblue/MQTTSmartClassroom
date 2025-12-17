@@ -3,6 +3,7 @@ using MQTTnet.Exceptions;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.Data;
 using System.Diagnostics;
 using System.IO;
@@ -187,202 +188,249 @@ namespace MQTTSmartClassroom
             
         }
 
+        private readonly Dictionary<int, TimeSpan> _lastCpuTimes = new Dictionary<int, TimeSpan>();
+        private DateTime _lastSampleUtc = DateTime.MinValue;
+
+
         private async void Executar()
         {
             while (isRunning)
             {
                 try
                 {
-                   
+
 
                     DateTime currentTime = DateTime.Now;
 
-                    try
+                    if (broker.isConnected)
                     {
-                        var action = new ActionComputer
+
+                        try
                         {
-                            COMPUTER_NAME = Environment.MachineName,
-                            ACTION = "KEETALIVE",
-                            TIMESTAMP = DateTime.Now
+                            var d = new DriveInfo("C");
+                            long total = d.TotalSize;          // bytes
+                            long free = d.TotalFreeSpace;     // bytes
+                            long used = total - free;
+                            double usedPct = total > 0 ? (used * 100.0 / total) : 0;
+
+                            var diskInfo = new DiskStatus
+                            {
+                                COMPUTER = Environment.MachineName,
+                                totalSize = total,
+                                freeSpace = free,
+                                usedSpace = used,
+                                usedPercentage = usedPct
+                            };
+
+                            string payload = JsonSerializer.Serialize(diskInfo);
+
+                            await broker.PublishAsync(smartClassroomName + @"/DISK_STATUS", payload.ToString());
+                        }
+                        catch (Exception ex)
+                        {
+                            PrependLogLine("ERRO-FIND-DISK", ex.Message);
+                        }
+
+                        try
+                        {
+                            var action = new ActionComputer
+                            {
+                                COMPUTER_NAME = Environment.MachineName,
+                                ACTION = "KEETALIVE",
+                                TIMESTAMP = DateTime.Now
+                            };
+
+                            string payload = JsonSerializer.Serialize(action);
+                            //SHUTDOWN_COMPUTER
+                            await broker.PublishAsync(smartClassroomName + @"/SHUTDOWN_COMPUTER", payload.ToString());
+                        }
+                        catch (Exception ex)
+                        {
+                            PrependLogLine("Executar->Erro", ex.Message);
+                        }
+
+                        Computer computer = new Computer
+                        {
+                            IsCpuEnabled = true,
+                            IsGpuEnabled = true,
+                            IsMemoryEnabled = true,
+                            IsMotherboardEnabled = true,
+                            IsStorageEnabled = true,
+                            IsControllerEnabled = true,
+                            IsPsuEnabled = true
                         };
 
-                        string payload = JsonSerializer.Serialize(action);
-                        //SHUTDOWN_COMPUTER
-                        await broker.PublishAsync(smartClassroomName + @"/SHUTDOWN_COMPUTER", payload.ToString());
-                    }
-                    catch (Exception ex)
-                    {
-                        PrependLogLine("Executar->Erro", ex.Message);
-                    }
+                        computer.Open();
 
-                    Computer computer = new Computer
-                    {
-                        IsCpuEnabled = true,
-                        IsGpuEnabled = true,
-                        IsMemoryEnabled = true,
-                        IsMotherboardEnabled = true,
-                        IsStorageEnabled = true
-                    };
+                        var hardwareList = new List<HardwareInfo>();
 
-                    computer.Open();
-
-                    foreach (var hardware in computer.Hardware)
-                    {
-                        Console.WriteLine($"Hardware: {hardware.Name}");
-                        hardware.Update(); // Atualiza os sensores
-
-                        /*foreach (var sensor in hardware.Sensors)
+                        try
                         {
-                            Console.WriteLine($"  {sensor.SensorType}: {sensor.Name} = {sensor.Value} ");
-                        }*/
-                    }
-
-                    var hardwareList = new List<HardwareInfo>();
-
-                    
-
-                    foreach (var hardware in computer.Hardware)
-                    {
-                        hardware.Update();
-                        var hardwareInfo = new HardwareInfo
-                        {
-                            Name = hardware.Name,
-                            Computer = System.Net.Dns.GetHostName(),
-                            Timestamp = currentTime // Adiciona o timestamp atual
-                        };
-
-
-                        foreach (var sensor in hardware.Sensors)
-                        {
-                            hardwareInfo.Sensors.Add(new SensorInfo
+                            foreach (var hardware in computer.Hardware)
                             {
-                                Type = sensor.SensorType.ToString(),
-                                Name = sensor.Name,
-                                Value = sensor.Value,
-                                Timestamp = currentTime // Adiciona o timestamp atual
-                            });
+                                hardware.Update();
+                                var hardwareInfo = new HardwareInfo
+                                {
+                                    Name = hardware.Name,
+                                    Computer = System.Net.Dns.GetHostName(),
+                                    Timestamp = currentTime // Adiciona o timestamp atual
+                                };
 
-                            
+
+                                foreach (var sensor in hardware.Sensors)
+                                {
+                                    hardwareInfo.Sensors.Add(new SensorInfo
+                                    {
+                                        Type = sensor.SensorType.ToString(),
+                                        Name = sensor.Name,
+                                        Value = sensor.Value,
+                                        Timestamp = currentTime // Adiciona o timestamp atual
+                                    });
+
+
+                                }
+
+                                hardwareList.Add(hardwareInfo);
+                            }
+
                         }
-
-                        hardwareList.Add(hardwareInfo);
-                    }
-                    
-
-                    // Converter para JSON
-                    string json = JsonSerializer.Serialize(hardwareList, new JsonSerializerOptions { WriteIndented = true });
-
-                    await broker.PublishAsync(smartClassroomName + @"/HARDWARE_SENSORS", json);
-                    //--------------------------------------------------------------------------------------------------------------------------
-                    
-                    var processos = Process.GetProcesses();
-                    int cpuCores = Environment.ProcessorCount;
-
-                    var cpuTimes = new Dictionary<int, TimeSpan>();
-                    var timeStamp = currentTime;
-
-                    foreach (var proc in processos)
-                    {
-                        try
+                        catch (Exception)
                         {
-                            cpuTimes[proc.Id] = proc.TotalProcessorTime;
+                            PrependLogLine("HardwareSensorsError", "Erro ao coletar sensores de hardware.");
                         }
-                        catch { }
-                    }
-
-
-                    var newTimeStamp = DateTime.UtcNow;
-                    var processosNovos = Process.GetProcesses();
-
-                    List<ProcessInfo> listaProcessos = new List<ProcessInfo>();
-
-                    /*foreach (var proc in processosNovos)
-                    {
-                        try
+                        finally
                         {
-                            if (!cpuTimes.ContainsKey(proc.Id))
-                                continue;
-
-                            TimeSpan oldCpuTime = cpuTimes[proc.Id];
-                            TimeSpan newCpuTime = proc.TotalProcessorTime;
-
-                            double cpuUsedMs = (newCpuTime - oldCpuTime).TotalMilliseconds;
-                            double elapsedMs = (newTimeStamp - timeStamp).TotalMilliseconds;
-
-                            double cpuPercent = (cpuUsedMs / elapsedMs) * 100.0 / cpuCores;
-
-                            listaProcessos.Add(new ProcessInfo
-                            {
-                                PID = proc.Id,
-                                CpuPercentage = Math.Round(cpuPercent, 2),
-                                Name = proc.ProcessName,
-                                Timestamp = currentTime
-
-                            });
+                            computer.Close();
                         }
-                        catch { }
-                    }*/
 
-                    foreach (var proc in processosNovos)
-                    {
-                        try
-                        {
-                            // pule processos que você ainda não tem "oldCpuTime"
-                            if (!cpuTimes.ContainsKey(proc.Id))
-                                continue;
-
-                            // ignore se já saiu
-                            if (ProcessInfo.SafeGet(() => proc.HasExited))
-                                continue;
-
-                            // CPU %
-                            TimeSpan oldCpuTime = cpuTimes[proc.Id];
-                            TimeSpan newCpuTime = ProcessInfo.SafeGet(() => proc.TotalProcessorTime);
-                            double cpuUsedMs = (newCpuTime - oldCpuTime).TotalMilliseconds;
-
-                            double elapsedMs = (newTimeStamp - timeStamp).TotalMilliseconds; // timeStamp: o anterior do seu loop
-                            if (elapsedMs <= 0) elapsedMs = 1; // evita divisão por zero
-
-                            double cpuPercent = (cpuUsedMs / elapsedMs) * 100.0 / cpuCores; // cpuCores = Environment.ProcessorCount
-
-                            // monta o objeto COMPLETO
-                            var info = ProcessInfo.MapProcessToInfo(proc, cpuPercent, currentTime);
-                            listaProcessos.Add(info);
-
-                            // atualize o snapshot de CPU p/ próxima iteração
-                            cpuTimes[proc.Id] = newCpuTime;
-                        }
-                        catch
-                        {
-                            // silencie processos inacessíveis
-                        }
-                    }
-
-                    // Ordena por maior uso de CPU
-                    var listaOrdenada = listaProcessos.OrderByDescending(p => p.CpuPercentage).ToList();
-
-                    var computerInfo = new ComputerInfo
-                    {
-                        ComputerName = Environment.MachineName,
-                        ProcessList = listaOrdenada,
-                        Timestamp = currentTime
                         
-                    };
+                        
+                        // Converter para JSON
+                        string json = JsonSerializer.Serialize(hardwareList, new JsonSerializerOptions { WriteIndented = true });
 
-                    // Converte para JSON
-                    json = JsonSerializer.Serialize(computerInfo, new JsonSerializerOptions { WriteIndented = true });
-                    await broker.PublishAsync(smartClassroomName  + @"/PROCESS_COMPUTERS", json);
+                        await broker.PublishAsync(smartClassroomName + @"/HARDWARE_SENSORS", json);
+                        PrependLogLine("HardwareSensorsPublished", "Sensores de hardware publicados com sucesso.");
+
+                        // ------------------- CPU por processo (delta entre iterações) -------------------
+                        var nowUtc = DateTime.UtcNow;
+
+                        // Primeira iteração: só “semeia” e sai
+                        if (_lastSampleUtc == DateTime.MinValue)
+                        {
+                            _lastSampleUtc = nowUtc;
+
+                            foreach (var p in Process.GetProcesses())
+                            {
+                                try
+                                {
+                                    p.Refresh();
+                                    _lastCpuTimes[p.Id] = p.TotalProcessorTime;
+                                }
+                                catch { }
+                                finally { p.Dispose(); }
+                            }
+
+                            // não tem delta ainda -> não publica CPU nesta rodada
+                        }
+                        else
+                        {
+                            double elapsedMs = (nowUtc - _lastSampleUtc).TotalMilliseconds;
+                            if (elapsedMs < 1) elapsedMs = 1;
+
+                            int cpuCores = Environment.ProcessorCount;
+                            var listaProcessos = new List<ProcessInfo>();
+
+                            foreach (var p in Process.GetProcesses())
+                            {
+                                try
+                                {
+                                    p.Refresh();
+                                    if (p.HasExited) continue;
+
+                                    var newCpu = p.TotalProcessorTime;
+
+                                    if (!_lastCpuTimes.TryGetValue(p.Id, out var oldCpu))
+                                    {
+                                        // Processo novo desde a última amostra
+                                        _lastCpuTimes[p.Id] = newCpu;
+                                        continue;
+                                    }
+
+                                    double cpuUsedMs = (newCpu - oldCpu).TotalMilliseconds;
+                                    if (cpuUsedMs < 0) cpuUsedMs = 0; // segurança
+
+                                    double cpuPercent = (cpuUsedMs / elapsedMs) * 100.0 / cpuCores;
+
+                                    // Evite arredondar cedo demais (isso mascara valores baixos)
+                                    var info = ProcessInfo.MapProcessToInfo(p, cpuPercent, currentTime);
+                                    listaProcessos.Add(info);
+
+                                    _lastCpuTimes[p.Id] = newCpu;
+                                }
+                                catch
+                                {
+                                    // processos sem permissão / que morrem no meio do caminho
+                                }
+                                finally
+                                {
+                                    p.Dispose();
+                                }
+                            }
+
+                            // Remove PIDs que sumiram (pra não crescer infinito)
+                            var alive = Process.GetProcesses().Select(pr => pr.Id).ToHashSet();
+                            foreach (var pid in _lastCpuTimes.Keys.Where(pid => !alive.Contains(pid)).ToList())
+                                _lastCpuTimes.Remove(pid);
+
+                            _lastSampleUtc = nowUtc;
+
+                            var listaOrdenada = listaProcessos
+                                .OrderByDescending(x => x.CpuPercentage)
+                                .ToList();
+
+                            var computerInfo = new ComputerInfo
+                            {
+                                ComputerName = Environment.MachineName,
+                                ProcessList = listaOrdenada,
+                                Timestamp = currentTime
+                            };
+
+                            json = JsonSerializer.Serialize(computerInfo, new JsonSerializerOptions { WriteIndented = true });
+                            await broker.PublishAsync(smartClassroomName + @"/PROCESS_COMPUTERS", json);
+                            PrependLogLine("ProcessListPublished", $"Lista de processos publicada com {listaOrdenada.Count} processos.");
+                        }
+                        // -------------------------------------------------------------------------------
 
 
-                    /*//Temperatura
-                    CpuTemperatureMonitor monitor = new CpuTemperatureMonitor();
-                    TemperatureReading cpuReading = monitor.GetOverallCpuTemperatureOpenHardware();
+                    }//Conectado ao MQTT
 
-                    json = JsonSerializer.Serialize(cpuReading, new JsonSerializerOptions { WriteIndented = true });
-                    await broker.PublishAsync(smartClassroomName + @"\CPU_TEMPERATURE", json);*/
+                    else
+                    {
 
-                    //Verifica se existe lista de payload
-                    
+                        //espera por conexão automática
+                        //caso exceda o tempo esperado de 5 tentativas tenta conectar manualmente
+                        byte tryConnect = 0;
+
+                        //while (!broker.isConnected)
+                        {
+                            //tryConnect += 1;
+
+                            //if (tryConnect > 5)
+                            {
+                                try
+                                {
+                                    await broker.ConnectAsync();
+                                    broker.isConnected = true;
+                                }
+                                catch (Exception ex)
+                                {
+                                    PrependLogLine("Running->ConnectMqtt->SubReconnect->Erro", ex.Message);
+                                }
+                                
+                            }
+                            //Thread.Sleep(TimeSpan.FromMinutes(2));
+                        }
+                    }
 
                     try
                     {
@@ -400,7 +448,7 @@ namespace MQTTSmartClassroom
 
                                             if (command.action == "include")
                                             {
-                                                if(!processOff.Contains(command.name))
+                                                if (!processOff.Contains(command.name))
                                                 {
                                                     processOff.Add(command.name);
                                                     PrependLogLine("ProcessAdded", $"Processo {command.name} adicionado à lista de encerramento.");
@@ -462,7 +510,7 @@ namespace MQTTSmartClassroom
                     {
                         if (actionTCPLoopback.Count > 0)
                         {
-                            foreach(var action in actionTCPLoopback)
+                            foreach (var action in actionTCPLoopback)
                             {
                                 var obj = JsonNode.Parse(action).AsObject();
                                 obj["name"] = Environment.MachineName;
@@ -470,7 +518,7 @@ namespace MQTTSmartClassroom
                             }
                             actionTCPLoopback.Clear();
                         }
-                        
+
                     }
                     catch (Exception ex)
                     {
@@ -478,7 +526,7 @@ namespace MQTTSmartClassroom
                     }
 
 
-                    if(tryToStartProgramKeepAwake > 45)
+                    if (tryToStartProgramKeepAwake > 45)
                     {
                         PrependLogLine("Shutdown", "Número máximo de tentativas de iniciar o programa para manter a máquina acordada atingido. Desligando o computador.");
                         Process.Start("shutdown", "/s /t 0 /F");
@@ -499,14 +547,14 @@ namespace MQTTSmartClassroom
                     //    DateTime.Now +  $" Running->Erro: {ex.Message}\n");
                     PrependLogLine("Running->Erro", ex.Message);
                 }
-                
+
                 finally
                 {
                     Thread.Sleep(sleepTimeRunning);
                     //await broker.DisconnectAsync();
                 }
 
-                
+
             }
         }
 
@@ -515,7 +563,7 @@ namespace MQTTSmartClassroom
 
             try
             {
-                broker.ConnectAsync();
+                //broker.ConnectAsync();
                 var action = new ActionComputer
                 {
                     COMPUTER_NAME = Environment.MachineName,
@@ -540,8 +588,49 @@ namespace MQTTSmartClassroom
             
         }
 
-        protected async override void OnShutdown()
+        protected override void OnShutdown()
         {
+
+            try
+            {
+                //broker.ConnectAsync();
+                var action = new ActionComputer
+                {
+                    COMPUTER_NAME = Environment.MachineName,
+                    ACTION = "SHUTDOWN",
+                    TIMESTAMP = DateTime.Now
+                };
+
+
+                while (!broker.isConnected)
+                {
+                    try
+                    {
+                        broker.ConnectAsync().Wait();
+                    }
+                    catch (Exception ex)
+                    {
+                        PrependLogLine("OnShutdown->ConnectMqtt->Erro", ex.Message);
+                    }
+                }
+
+                string json = JsonSerializer.Serialize(action);
+                broker.PublishAsync(smartClassroomName + @"/SHUTDOWN_COMPUTER", json.ToString()).Wait();
+                PrependLogLine("OnShutdown", "Mensagem de shutdown enviada ao broker MQTT.");
+            }
+            catch (Exception ex)
+            {
+                PrependLogLine("OnShutdown->Erro", ex.Message);
+            }
+
+
+            isRunning = false;
+            broker.DisconnectAsync().Wait();
+            if (workerThread != null && workerThread.IsAlive)
+                workerThread.Join();
+
+            PrependLogLine("OnShutdown", "Serviço finalizado durante o shutdown do Windows.");
+
             // código executado especificamente durante o shutdown do Windows
             base.OnShutdown();
 

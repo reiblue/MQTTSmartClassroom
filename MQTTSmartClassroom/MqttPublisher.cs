@@ -18,6 +18,7 @@ namespace MQTTClient
     {
         private readonly IMqttClient _mqttClient;
         private readonly MqttClientOptions _options;
+        public bool isConnected = false;
 
         public MqttPublisher(string brokerAddress, string idClient, int brokerPort = 1883)
         {
@@ -76,26 +77,36 @@ namespace MQTTClient
 
             _options = builder.Build();
 
+
+            //Evento de desconexão para reconexão automática
             _mqttClient.DisconnectedAsync += async e =>
             {
                 // Log para debug (pode trocar por gravação em arquivo/banco)
                 smartclassroom.PrependLogLine($"[MQTT] Desconectado. Motivo: {e.Reason}", "Desconexao");
 
                 // Se quiser tentar reconectar automaticamente para sempre:
-                await Task.Delay(TimeSpan.FromSeconds(5)); // Espera 5s antes de tentar
+                await Task.Delay(TimeSpan.FromSeconds(25)); // Espera 25s antes de tentar
 
-                try
+                isConnected = false;
+
+                //while (!_mqttClient.IsConnected)
                 {
-                    // Tenta reconectar usando as opções já configuradas (_options)
-                    // Importante: Como estamos dentro de um evento, o async/await funciona bem aqui
-                    await _mqttClient.ConnectAsync(_options, CancellationToken.None);
-                    Console.WriteLine("[MQTT] Reconectado com sucesso!");
-                    smartclassroom.PrependLogLine("[MQTT] Reconectado com sucesso!", "Reconexao");
+                    try
+                    {
+                        // Tenta reconectar usando as opções já configuradas (_options)
+                        // Importante: Como estamos dentro de um evento, o async/await funciona bem aqui
+                        await _mqttClient.ConnectAsync(_options, CancellationToken.None);
+                        smartclassroom.PrependLogLine("MQTT Reconectado com sucesso!", "Reconexao");
+                        isConnected = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        smartclassroom.PrependLogLine("MQTT Falha ao tentar reconectar.", ex.Message);
+                        //Task.Delay(TimeSpan.FromSeconds(2));
+                    }
                 }
-                catch(Exception ex)
-                {
-                    smartclassroom.PrependLogLine("[MQTT] Falha ao tentar reconectar.", ex.Message);
-                }
+
+                    
             };
         }
 
@@ -105,7 +116,8 @@ namespace MQTTClient
             try
             {
                 await _mqttClient.ConnectAsync(_options);
-                Console.WriteLine("Conectado ao broker MQTT!");
+                smartclassroom.PrependLogLine("✅ Conectado ao broker MQTT.", "Conexao");
+                isConnected = true;
             }
             catch (Exception ex)
             {
@@ -138,7 +150,8 @@ namespace MQTTClient
         public async Task DisconnectAsync()
         {
             await _mqttClient.DisconnectAsync();
-            Console.WriteLine("Desconectado do broker.");
+            smartclassroom.PrependLogLine("✅ Desconectado do broker MQTT.", "Desconexao");
+            isConnected = false;
         }
 
         
