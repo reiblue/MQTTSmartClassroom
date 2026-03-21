@@ -61,6 +61,8 @@ namespace MQTTSmartClassroom
         private static byte tryToStartProgramKeepAwake = 0;
         private bool isConnectMqtt = false;
 
+        private DiskIoMonitor diskIoMonitor = new DiskIoMonitor("_Total");
+
         public smartclassroom()
         {
             InitializeComponent();
@@ -153,9 +155,7 @@ namespace MQTTSmartClassroom
             try
             {
                 PrependLogLine("OnStart->Subscriber->Action", "Iniciando MQTT Publisher");
-                isRunning = true;
-                workerThread = new Thread(Executar);
-                workerThread.Start();
+                
 
                 broker =
                     new MQTTClient.MqttPublisher(
@@ -169,10 +169,7 @@ namespace MQTTSmartClassroom
 
                 broker.ConnectAsync().Wait();
 
-
-                sleepTimeRunning = 1000 * 60 * timeMinutes; // Convertendo minutos para segundos
-
-                await ConnectionTCP();
+                
                 PrependLogLine("OnStart->Subscriber->Action", "MQTT Publisher Ok!");
 
             }
@@ -182,6 +179,25 @@ namespace MQTTSmartClassroom
                 System.IO.File.AppendAllText(logPathLog,
                         DateTime.Now + $" OnStart->Erro: {ex.Message}\n");
 
+            }
+
+            try
+            {
+
+                PrependLogLine("OnStart->Subscriber->Action", "Iniciando Loopback TCP Server");
+                isRunning = true;
+                workerThread = new Thread(Executar);
+                workerThread.Start();
+
+                sleepTimeRunning = 1000 * 60 * timeMinutes; // Convertendo minutos para segundos
+
+                await ConnectionTCP();
+
+                PrependLogLine("OnStart->Subscriber->Action", "Loopback TCP Server iniciado");
+            }
+            catch (Exception ex)
+            {
+                PrependLogLine("OnStart->Subscriber->LoopbackTCP->Erro", ex.Message);
             }
 
            
@@ -213,13 +229,19 @@ namespace MQTTSmartClassroom
                             long used = total - free;
                             double usedPct = total > 0 ? (used * 100.0 / total) : 0;
 
+                            var (readMbs, writeMbs, readMax, writeMax) = diskIoMonitor.ReadNow();
+
                             var diskInfo = new DiskStatus
                             {
                                 COMPUTER = Environment.MachineName,
                                 totalSize = total,
                                 freeSpace = free,
                                 usedSpace = used,
-                                usedPercentage = usedPct
+                                usedPercentage = usedPct,
+                                redMBs = readMbs,
+                                writeMBs = writeMbs,
+                                readMaxMBs = readMax,
+                                writeMaxMBs = writeMax
                             };
 
                             string payload = JsonSerializer.Serialize(diskInfo);
@@ -460,8 +482,16 @@ namespace MQTTSmartClassroom
                                             }
                                             else if (command.action == "remove")
                                             {
-                                                processOff.RemoveAt(processOff.IndexOf(command.name));
-                                                PrependLogLine("ProcessRemoved", $"Processo {command.name} removido da lista de encerramento.");
+                                                
+                                                if (processOff.Remove(command.name))
+                                                    PrependLogLine("ProcessRemoved", $"Processo {command.name} removido da lista de encerramento.");
+                                                else
+                                                    PrependLogLine("ProcessRemoveError", $"Processo {command.name} não estava na lista de encerramento.");
+
+
+                                            }else if(command.action == "timesup")
+                                            {
+                                                await BroadcastTextAsync(clients, "timesup", cts.Token);
                                             }
                                         }
                                     }
@@ -638,8 +668,9 @@ namespace MQTTSmartClassroom
 
         }
 
-        
 
+        static ConcurrentDictionary<TcpClient, NetworkStream> clients = new ConcurrentDictionary<TcpClient, NetworkStream>();
+        static CancellationTokenSource cts = new CancellationTokenSource();
         static async Task ConnectionTCP()
         {
             //Console.Title = "LoopbackServer";
@@ -652,7 +683,7 @@ namespace MQTTSmartClassroom
             System.IO.File.AppendAllText(logPathLog,
                                    DateTime.Now + $" [SERVER] Escutando em {BindAddress}:{Port} \n");
 
-            var clients = new ConcurrentDictionary<TcpClient, NetworkStream>();
+            
 
 
 
@@ -803,7 +834,42 @@ namespace MQTTSmartClassroom
             while (!ct.IsCancellationRequested) await Task.Delay(100, ct);
         }
 
-        
+        static async Task BroadcastTextAsync(
+    ConcurrentDictionary<TcpClient, NetworkStream> clients,
+    string text,
+    CancellationToken ct
+)
+        {
+            // UTF-8 sem BOM
+            var data = Encoding.UTF8.GetBytes(text + "\n");
+
+            foreach (var kv in clients.ToArray()) // snapshot seguro
+            {
+                var client = kv.Key;
+                var stream = kv.Value;
+                                
+
+                try
+                {
+                    // se já morreu, tenta remover
+                    if (!client.Connected)
+                    {
+                        clients.TryRemove(client, out _);
+                        continue;
+                    }
+
+                    await stream.WriteAsync(data, 0, data.Length, ct);
+                    await stream.FlushAsync(ct);
+                }
+                catch
+                {
+                    // falhou => remove e fecha silenciosamente
+                    clients.TryRemove(client, out _);
+                    try { stream.Close(); client.Close(); } catch { }
+                }
+            }
+        }
+
 
         // ===== Monitor que dispara o cliente se não houver conexões =====
         /// <summary>

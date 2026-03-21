@@ -15,5 +15,11 @@ namespace MQTTSmartClassroom
         public double freeSpace  { get; set; }
         public double usedSpace  { get; set; }
         public double usedPercentage  { get; set; }
-     }
+        public double redMBs  { get; set; }
+        public double writeMBs  { get; set; }
+        public double readMaxMBs  { get; set; }
+        public double writeMaxMBs  { get; set; }
+
+
+    }
 }
