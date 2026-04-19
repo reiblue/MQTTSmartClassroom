@@ -11,6 +11,7 @@ using System.Linq;
 using System.Management;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Policy;
 using System.ServiceProcess;
 using System.Text;
 using System.Text.Json;
@@ -63,6 +64,8 @@ namespace MQTTSmartClassroom
 
         private DiskIoMonitor diskIoMonitor = new DiskIoMonitor("_Total");
 
+        private static bool isStopSmartLabKeepAwakeRunning = false;
+
         public smartclassroom()
         {
             InitializeComponent();
@@ -100,7 +103,9 @@ namespace MQTTSmartClassroom
                 System.IO.File.AppendAllText(logPathLog,
                         DateTime.Now + $" LOAD: idleMaxMinutes\n");
 
-
+                isStopSmartLabKeepAwakeRunning = bool.Parse(File.ReadAllText(path + "IsStopSmartLabKeepAwakeRunning.txt").Trim());
+                                System.IO.File.AppendAllText(logPathLog,
+                        DateTime.Now + $" LOAD: isStopSmartLabKeepAwakeRunning\n");
 
             }
             catch (Exception ex)
@@ -142,7 +147,15 @@ namespace MQTTSmartClassroom
                     );
 
                 await subscriber.ConnectAsync();
+                //Inscrição no tópico específico para esta máquina para desligar processos
                 await subscriber.SubscribeAsync(smartClassroomName + @"/" + Environment.MachineName);
+
+                //Inscrição para desligar a máquina idividualmente
+                //await subscriber.SubscribeAsync(smartClassroomName + @"/" + Environment.MachineName + @"/SHUTDOWN");
+
+                //Inscrição para desligar a máquina para todos os computadores da sala
+                //await subscriber.SubscribeAsync(smartClassroomName + @"/SHUTDOWN");
+
 
                 //PrependLogLine("OnStart->Subscriber", "Incrito topico: " + smartClassroomName + @"/" + Environment.MachineName);
 
@@ -464,6 +477,7 @@ namespace MQTTSmartClassroom
                                     try
                                     {
 
+
                                         var command = JsonSerializer.Deserialize<ProcessSetInfo>(payload);
                                         if (command != null)
                                         {
@@ -555,12 +569,20 @@ namespace MQTTSmartClassroom
                         PrependLogLine("Running->Process->Erro", ex.Message);
                     }
 
-
-                    if (tryToStartProgramKeepAwake > 45)
+                    if(tryToStartProgramKeepAwake > 0 && tryToStartProgramKeepAwake <= 45)
+                    {
+                        PrependLogLine("Running", $"Tentativa de iniciar programa para manter máquina acordada: {tryToStartProgramKeepAwake}");
+                        string json = Idle(tryToStartProgramKeepAwake);
+                        await broker.PublishAsync(smartClassroomName + @"/IDLE", json);
+                        PrependLogLine("IdlePublished", $"Mensagem de idle publicada com tempo: {tryToStartProgramKeepAwake} minutos.");)
+                    }
+                    else if (tryToStartProgramKeepAwake > 45)
                     {
                         PrependLogLine("Shutdown", "Número máximo de tentativas de iniciar o programa para manter a máquina acordada atingido. Desligando o computador.");
                         Process.Start("shutdown", "/s /t 0 /F");
                     }
+
+                    
 
 
                 }
@@ -586,6 +608,22 @@ namespace MQTTSmartClassroom
 
 
             }
+        }
+
+        private string Idle(int idleMinutes)
+        {
+            var dados = new Dictionary<string, object>();
+
+            var tempo = TimeSpan.FromMinutes(idleMinutes);
+
+            dados["idle"] = tempo.ToString(@"hh\:mm\:ss\.fffffff");
+            dados["ocioso"] = "00:00:00.0000000";
+            dados["operacao"] = tempo.ToString(@"hh\:mm\:ss\.fffffff");
+            dados["name"] = Environment.MachineName;
+
+            string json = JsonSerializer.Serialize(dados);
+
+            return json;
         }
 
         protected async override void OnStop()
@@ -673,8 +711,16 @@ namespace MQTTSmartClassroom
         static CancellationTokenSource cts = new CancellationTokenSource();
         static async Task ConnectionTCP()
         {
+
             //Console.Title = "LoopbackServer";
             //Console.OutputEncoding = Encoding.UTF8;
+
+            if (!isStopSmartLabKeepAwakeRunning)
+            {
+                System.IO.File.AppendAllText(logPathLog,
+                        DateTime.Now + $" Não iniciado SmartLabKeepToAwake...\n");
+                return;
+            }
 
             var cts = new CancellationTokenSource();
 
@@ -684,9 +730,6 @@ namespace MQTTSmartClassroom
                                    DateTime.Now + $" [SERVER] Escutando em {BindAddress}:{Port} \n");
 
             
-
-
-
             // tarefa para aceitar conexões
             var acceptTask = Task.Run(async () =>
             {
@@ -899,52 +942,53 @@ namespace MQTTSmartClassroom
                         if (!IsClientProcessRunning())
                         {
                             //if (UsuarioUsaLoginLocalDaMaquina())
-                                if (File.Exists(CLIENT_EXE_PATH))
+                            if (File.Exists(CLIENT_EXE_PATH))
+                            {
+                                PrependLogLine("SERVER", $"Nenhum cliente conectado. Iniciando cliente: {CLIENT_EXE_PATH}");
+                                //var psi = new ProcessStartInfo
+                                //{
+                                //    FileName = CLIENT_EXE_PATH,
+                                //    UseShellExecute = false,
+                                //    CreateNoWindow = false,   // deixe true se quiser oculto
+                                //    WorkingDirectory = Path.GetDirectoryName(CLIENT_EXE_PATH)
+                                //};
+                                //try
+                                //{
+                                //    Process.Start(psi);
+                                //    lastLaunch = DateTime.UtcNow;
+                                //}
+                                //catch (Exception ex)
+                                //{
+                                //    System.IO.File.AppendAllText(logPathLog,
+                                //    DateTime.Now + $" [SERVER] Falha ao iniciar cliente: {ex.Message}\n");
+                                //}
+
+                                try
                                 {
-                                    PrependLogLine("SERVER", $"Nenhum cliente conectado. Iniciando cliente: {CLIENT_EXE_PATH}");
-                                    //var psi = new ProcessStartInfo
-                                    //{
-                                    //    FileName = CLIENT_EXE_PATH,
-                                    //    UseShellExecute = false,
-                                    //    CreateNoWindow = false,   // deixe true se quiser oculto
-                                    //    WorkingDirectory = Path.GetDirectoryName(CLIENT_EXE_PATH)
-                                    //};
-                                    //try
-                                    //{
-                                    //    Process.Start(psi);
-                                    //    lastLaunch = DateTime.UtcNow;
-                                    //}
-                                    //catch (Exception ex)
-                                    //{
-                                    //    System.IO.File.AppendAllText(logPathLog,
-                                    //    DateTime.Now + $" [SERVER] Falha ao iniciar cliente: {ex.Message}\n");
-                                    //}
+                                    var proc = UserSessionLauncher.StartInActiveUserSession(CLIENT_EXE_PATH, "--arg1");
+                                    tryToStartProgramKeepAwake = 0;
+                                    //bool visivel = VisibilityChecks.WaitUntilVisible(proc, TimeSpan.FromSeconds(10));
 
-                                    try
-                                    {
-                                        var proc = UserSessionLauncher.StartInActiveUserSession(CLIENT_EXE_PATH, "--arg1");
-                                        //bool visivel = VisibilityChecks.WaitUntilVisible(proc, TimeSpan.FromSeconds(10));
-
-                                        //// Logue o resultado
-                                        //if (visivel)
-                                        //    EventLog.WriteEntry("MeuServico", "Aplicativo iniciado e visível ao usuário.", EventLogEntryType.Information);
-                                        //else
-                                        //    EventLog.WriteEntry("MeuServico", "Aplicativo iniciado, mas não foi possível confirmar visibilidade.", EventLogEntryType.Warning);
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        EventLog.WriteEntry("MeuServico", $"Falha ao iniciar app para o usuário: {ex.Message}", EventLogEntryType.Error);
-                                        tryToStartProgramKeepAwake += 1;
-                                        Thread.Sleep(1000 * 60);
+                                    //// Logue o resultado
+                                    //if (visivel)
+                                    //    EventLog.WriteEntry("MeuServico", "Aplicativo iniciado e visível ao usuário.", EventLogEntryType.Information);
+                                    //else
+                                    //    EventLog.WriteEntry("MeuServico", "Aplicativo iniciado, mas não foi possível confirmar visibilidade.", EventLogEntryType.Warning);
                                 }
-
-                                }
-                                else
+                                catch (Exception ex)
                                 {
-                                    System.IO.File.AppendAllText(logPathLog,
-                                        DateTime.Now + $" [SERVER] CLIENT_EXE_PATH não encontrado: {CLIENT_EXE_PATH}\n");
-                                    tryToStartProgramKeepAwake += 1;
+                                    EventLog.WriteEntry("MeuServico", $"Falha ao iniciar app para o usuário: {ex.Message}", EventLogEntryType.Error);
+                                    tryToStartProgramKeepAwake += 1;  
                                     Thread.Sleep(1000 * 60);
+                                }
+
+                            }
+                            else
+                            {
+                                System.IO.File.AppendAllText(logPathLog,
+                                    DateTime.Now + $" [SERVER] CLIENT_EXE_PATH não encontrado: {CLIENT_EXE_PATH}\n");
+                                tryToStartProgramKeepAwake += 1;
+                                Thread.Sleep(1000 * 60);
 
                             }
                         }
