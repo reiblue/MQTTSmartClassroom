@@ -103,9 +103,9 @@ namespace MQTTSmartClassroom
                 System.IO.File.AppendAllText(logPathLog,
                         DateTime.Now + $" LOAD: idleMaxMinutes\n");
 
-                isStopSmartLabKeepAwakeRunning = bool.Parse(File.ReadAllText(path + "IsStopSmartLabKeepAwakeRunning.txt").Trim());
-                                System.IO.File.AppendAllText(logPathLog,
-                        DateTime.Now + $" LOAD: isStopSmartLabKeepAwakeRunning\n");
+                //isStopSmartLabKeepAwakeRunning = bool.Parse(File.ReadAllText(path + "IsStopSmartLabKeepAwakeRunning.txt").Trim());
+                //                System.IO.File.AppendAllText(logPathLog,
+                //        DateTime.Now + $" LOAD: isStopSmartLabKeepAwakeRunning\n");
 
             }
             catch (Exception ex)
@@ -574,7 +574,7 @@ namespace MQTTSmartClassroom
                         PrependLogLine("Running", $"Tentativa de iniciar programa para manter máquina acordada: {tryToStartProgramKeepAwake}");
                         string json = Idle(tryToStartProgramKeepAwake);
                         await broker.PublishAsync(smartClassroomName + @"/IDLE", json);
-                        PrependLogLine("IdlePublished", $"Mensagem de idle publicada com tempo: {tryToStartProgramKeepAwake} minutos.");)
+                        PrependLogLine("IdlePublished", $"Mensagem de idle publicada com tempo: {tryToStartProgramKeepAwake} minutos.");
                     }
                     else if (tryToStartProgramKeepAwake > 45)
                     {
@@ -715,12 +715,12 @@ namespace MQTTSmartClassroom
             //Console.Title = "LoopbackServer";
             //Console.OutputEncoding = Encoding.UTF8;
 
-            if (!isStopSmartLabKeepAwakeRunning)
-            {
-                System.IO.File.AppendAllText(logPathLog,
-                        DateTime.Now + $" Não iniciado SmartLabKeepToAwake...\n");
-                return;
-            }
+            //if (!isStopSmartLabKeepAwakeRunning)
+            //{
+            //    System.IO.File.AppendAllText(logPathLog,
+            //            DateTime.Now + $" Não iniciado SmartLabKeepToAwake...\n");
+            //    return;
+            //}
 
             var cts = new CancellationTokenSource();
 
