@@ -8,7 +8,7 @@ O serviço (**SmartClassroom**) roda em segundo plano em cada estação de traba
 
 > Este projeto é o **agente cliente** do ecossistema Smart Lab. Os serviços de backend estão em [ServicosLinux](https://github.com/reiblue/ServicosLinux) e o painel do gêmeo digital em [DigitalTwinSmartLab](https://github.com/reiblue/DigitalTwinSmartLab).
 
-> **Autor:** Rodrigo Mendes Peixoto — rodrigo.peixoto@ifrj.edu.br
+> **Autor:** Rodrigo Mendes Peixoto
 
 ---
 
