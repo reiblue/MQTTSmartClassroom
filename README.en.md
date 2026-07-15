@@ -8,7 +8,7 @@ The service (**SmartClassroom**) runs in the background on each workstation, col
 
 > This project is the **client agent** of the Smart Lab ecosystem. The backend services live in [ServicosLinux](https://github.com/reiblue/ServicosLinux) and the digital twin dashboard in [DigitalTwinSmartLab](https://github.com/reiblue/DigitalTwinSmartLab).
 
-> **Author:** Rodrigo Mendes Peixoto — rodrigo.peixoto@ifrj.edu.br
+> **Author:** Rodrigo Mendes Peixoto 
 
 ---
 
